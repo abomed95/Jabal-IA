@@ -34,7 +34,7 @@ def ingest(directory: str) -> None:
     except IngestError as e:
         sys.exit(f"Ingestion refusée : {e}")
     for r in results:
-        print(f"{r['file']}: {r['lessons']} leçons, {r['chunks']} extraits (brouillon)")
+        print(f"{r['file']}: {r['lessons']} leçons, {r['exercises']} exercices, {r['chunks']} extraits (brouillon)")
 
 
 def main() -> None:

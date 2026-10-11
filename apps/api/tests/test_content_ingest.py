@@ -81,6 +81,45 @@ def test_reload_replaces_drafts_but_refuses_validated(db):
     load_chapter(db, parse_chapter(SAMPLE))  # idempotent
     assert db.execute(text("SELECT count(*) FROM lessons")).scalar_one() == 2
     db.execute(text("UPDATE lessons SET status='validated', validated_at=now() WHERE position=1"))
-    with pytest.raises(IngestError, match="validée"):
+    with pytest.raises(IngestError, match="validé"):
         load_chapter(db, parse_chapter(SAMPLE))
     assert db.execute(text("SELECT count(*) FROM lessons")).scalar_one() == 2  # rien d'écrasé
+
+
+EXERCISE_SAMPLE = SAMPLE.replace("source: Chap1_Fonct.pdf", "source: Chap1_Fonct.pdf\nmanual: Manuel test 2014") + """
+## [exercice] Exercice 7 | p.39
+### Énoncé
+Calculer $|1 - \\pi|$.
+### Corrigé
+$|1 - \\pi| = \\pi - 1$.
+"""
+
+
+def test_exercise_pairs_are_loaded_as_drafts(db):
+    out = load_chapter(db, parse_chapter(EXERCISE_SAMPLE))
+    assert out["exercises"] == 1 and out["lessons"] == 2
+    row = db.execute(text("SELECT statement_md, solution_md, status, source_ref FROM exercises")).one()
+    assert "Calculer" in row.statement_md and "pi - 1" in row.solution_md
+    assert row.status == "draft"
+    assert row.source_ref == "Manuel test 2014 p.39 ; corrigé Chap1_Fonct.pdf"
+
+
+@pytest.mark.parametrize(
+    "block, message",
+    [
+        ("### Énoncé\nQuestion $x$.\n", "obligatoires"),
+        ("### Corrigé\nRéponse.\n### Énoncé\nQuestion.\n", "obligatoires"),
+        ("### Énoncé\n\n### Corrigé\nRéponse.\n", "vide"),
+    ],
+)
+def test_exercise_needs_statement_then_solution(block, message):
+    raw = SAMPLE + "\n## [exercice] Exercice 8 | p.40\n" + block
+    with pytest.raises(IngestError, match=message):
+        parse_chapter(raw)
+
+
+def test_validated_exercise_blocks_reload(db):
+    load_chapter(db, parse_chapter(EXERCISE_SAMPLE))
+    db.execute(text("UPDATE exercises SET status='validated'"))
+    with pytest.raises(IngestError, match="validé"):
+        load_chapter(db, parse_chapter(EXERCISE_SAMPLE))

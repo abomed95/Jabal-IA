@@ -3,13 +3,19 @@
 `content/source/*.md` contient les chapitres transcrits (Markdown + LaTeX). Ces fichiers **ne sont jamais
 versionnés** (droits d'auteur, dépôt public) : voir `.gitignore`.
 
+## Source des énoncés
+
+Les énoncés viennent du **manuel officiel « Mathématiques 1re S » (CRIPEN, Djibouti, 2014)**, dont les corrigés
+fournis suivent la numérotation. Dossier Drive de l'inspection : « Manuels Général / Manuels Première ».
+Les exercices sont chargés par paires `### Énoncé` / `### Corrigé` (sections `[qcm]`, `[exercice]`,
+`[probleme]`) ; chaque corrigé est recalculé avant chargement. Les écarts trouvés vont dans
+`content/review/` (jamais versionné) pour relecture par un enseignant.
+
 ## Ce que contiennent les PDF fournis
 
 Les 9 PDF « Chap… » sont des **corrigés seuls** (réponses, tableaux de variation, captures de calculatrice,
-graphiques) : les énoncés sont dans le manuel papier. Conséquence : ils alimentent les leçons
-`exercice_corrige` / `activite` / `tp` et la recherche du tuteur, mais pas des exercices complets
-(énoncé + solution) ni le jeu d'essai de 150 questions. Pour cela il faut les énoncés (manuel ou fichier
-de l'enseignant).
+graphiques) : les énoncés sont dans le manuel. On les associe donc au manuel officiel pour obtenir des exercices complets
+(énoncé + corrigé), base du jeu d'essai de 150 questions.
 
 ## Chaîne d'ingestion
 

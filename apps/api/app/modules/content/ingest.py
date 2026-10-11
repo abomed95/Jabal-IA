@@ -13,7 +13,14 @@ Format d'un fichier chapitre (content/source/*.md, JAMAIS versionné : droits d'
     ## [exercice_corrige] Exercice 2 | p.3
     Corps Markdown + LaTeX ($...$ ou $$...$$).
 
-Chaque section devient une `lesson` en statut `draft`. Rien n'est servi aux élèves tant qu'un
+    ## [exercice] Exercice 7 | p.39        (ou [qcm], [probleme])
+    ### Énoncé
+    ...
+    ### Corrigé
+    ...
+
+Une section de type leçon devient une `lesson`, une section [qcm]/[exercice]/[probleme] devient un
+`exercise` (énoncé + corrigé obligatoires), toujours en statut `draft`. Rien n'est servi aux élèves tant qu'un
 enseignant n'a pas validé (status validated + validated_at), voir db/schema.sql.
 """
 import re
@@ -25,6 +32,9 @@ from sqlalchemy import Connection, text
 LEVELS = {"premiere_s", "terminale_s"}
 DOMAINS = {"analyse", "geometrie", "probabilites_statistiques", "arithmetique", "nombres_complexes"}
 KINDS = {"diagnostic", "activite", "cours", "methode", "tp", "exercice_corrige"}
+EXERCISE_KINDS = {"qcm", "exercice", "probleme"}
+STATEMENT_RE = re.compile(r"^###\s*Énoncé\s*$", re.M)
+SOLUTION_RE = re.compile(r"^###\s*Corrigé\s*$", re.M)
 SECTION_RE = re.compile(r"^##\s*\[(?P<kind>[a-z_]+)\]\s*(?P<title>[^|]+?)\s*(?:\|\s*p\.(?P<page>[\d\-–, ]+))?\s*$")
 MAX_CHUNK = 900  # caractères : assez court pour une recherche plein texte précise
 
@@ -39,6 +49,8 @@ class Section:
     title: str
     body: str
     page: str | None = None
+    statement: str | None = None  # exercices uniquement
+    solution: str | None = None
 
 
 @dataclass
@@ -49,6 +61,7 @@ class Chapter:
     title: str
     domain: str
     source: str
+    manual: str = ""
     sections: list[Section] = field(default_factory=list)
 
 
@@ -77,6 +90,16 @@ def _check_math(body: str, where: str) -> None:
         raise IngestError(f"{where} : accolades { '{}' } déséquilibrées")
 
 
+def _split_exercise(section: Section) -> None:
+    st, so = STATEMENT_RE.search(section.body), SOLUTION_RE.search(section.body)
+    if not st or not so or so.start() < st.end():
+        raise IngestError(f"{section.title} : '### Énoncé' puis '### Corrigé' obligatoires")
+    section.statement = section.body[st.end() : so.start()].strip()
+    section.solution = section.body[so.end() :].strip()
+    if not section.statement or not section.solution:
+        raise IngestError(f"{section.title} : énoncé ou corrigé vide")
+
+
 def parse_chapter(raw: str) -> Chapter:
     meta, content = _split_front_matter(raw)
     for key in ("level", "code", "position", "title", "domain", "source"):
@@ -90,7 +113,7 @@ def parse_chapter(raw: str) -> Chapter:
         raise IngestError("position doit être un entier")
     chapter = Chapter(
         level=meta["level"], code=meta["code"], position=int(meta["position"]),
-        title=meta["title"], domain=meta["domain"], source=meta["source"],
+        title=meta["title"], domain=meta["domain"], source=meta["source"], manual=meta.get("manual", ""),
     )
     current: Section | None = None
     buf: list[str] = []
@@ -101,6 +124,8 @@ def parse_chapter(raw: str) -> Chapter:
         current.body = "\n".join(buf).strip()
         if not current.body:
             raise IngestError(f"section vide : {current.title}")
+        if current.kind in EXERCISE_KINDS:
+            _split_exercise(current)
         _check_math(current.body, current.title)
         chapter.sections.append(current)
 
@@ -110,7 +135,7 @@ def parse_chapter(raw: str) -> Chapter:
             m = SECTION_RE.match(line)
             if not m:
                 raise IngestError(f"titre de section illisible : {line!r}")
-            if m["kind"] not in KINDS:
+            if m["kind"] not in KINDS | EXERCISE_KINDS:
                 raise IngestError(f"type de section inconnu : {m['kind']}")
             current = Section(kind=m["kind"], title=m["title"], body="", page=(m["page"] or "").strip() or None)
             buf = []
@@ -154,17 +179,35 @@ def load_chapter(conn: Connection, chapter: Chapter) -> dict[str, int]:
     ).one()
     chapter_id = row.id
     locked = conn.execute(
-        text("SELECT count(*) FROM lessons WHERE chapter_id = :c AND status <> 'draft'"), {"c": chapter_id}
+        text(
+            "SELECT (SELECT count(*) FROM lessons WHERE chapter_id = :c AND status <> 'draft') + "
+            "(SELECT count(*) FROM exercises WHERE chapter_id = :c AND status <> 'draft')"
+        ),
+        {"c": chapter_id},
     ).scalar_one()
     if locked:
         raise IngestError(
-            f"le chapitre '{chapter.code}' contient {locked} leçon(s) validée(s) : rechargement refusé "
+            f"le chapitre '{chapter.code}' contient {locked} élément(s) validé(s) : rechargement refusé "
             "(créer une nouvelle version à la main plutôt que d'écraser un contenu validé)"
         )
     conn.execute(text("DELETE FROM lessons WHERE chapter_id = :c"), {"c": chapter_id})  # cascade : chunks
-    n_chunks = 0
+    conn.execute(text("DELETE FROM exercises WHERE chapter_id = :c"), {"c": chapter_id})
+    n_chunks = n_exercises = n_lessons = 0
     for pos, s in enumerate(chapter.sections, start=1):
         ref = f"{chapter.source}" + (f" p.{s.page}" if s.page else "")
+        if s.kind in EXERCISE_KINDS:
+            manual = f"{chapter.manual} p.{s.page} ; " if chapter.manual and s.page else ""
+            conn.execute(
+                text(
+                    "INSERT INTO exercises (chapter_id, kind, statement_md, solution_md, source_ref) "
+                    "VALUES (:c, :k, :st, :so, :r)"
+                ),
+                {"c": chapter_id, "k": s.kind, "st": f"**{s.title}**\n\n{s.statement}", "so": s.solution,
+                 "r": f"{manual}corrigé {chapter.source}"},
+            )
+            n_exercises += 1
+            continue
+        n_lessons += 1
         lesson_id = conn.execute(
             text(
                 "INSERT INTO lessons (chapter_id, kind, position, title, body_md, source_ref) "
@@ -181,7 +224,7 @@ def load_chapter(conn: Connection, chapter: Chapter) -> dict[str, int]:
                 {"l": lesson_id, "c": chapter_id, "p": i, "t": f"{s.title}\n\n{ch}"},
             )
             n_chunks += 1
-    return {"chapter_id": chapter_id, "lessons": len(chapter.sections), "chunks": n_chunks}
+    return {"chapter_id": chapter_id, "lessons": n_lessons, "exercises": n_exercises, "chunks": n_chunks}
 
 
 def ingest_dir(conn: Connection, directory: Path) -> list[dict[str, int]]:
