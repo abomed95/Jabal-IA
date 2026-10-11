@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+# Node
+node_modules/
+.next/
+out/
+# Secrets / env
+.env
+.env.*
+!.env.example
+# Contenu pédagogique : NE JAMAIS versionner les PDF sources (droits d'auteur, dépôt public)
+content/raw/
+content/source/
+*.pdf
